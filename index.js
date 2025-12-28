@@ -18,13 +18,11 @@ const { getGroupAdmins } = require("./lib/functions");
 const { File } = require("megajs");
 const { commands, replyHandlers } = require("./command");
 
-// --- 📂 Import Reply Maps & DB Functions ---
 const { lastMenuMessage } = require("./plugins/menu");
 const { lastSettingsMessage } = require("./plugins/settings"); 
-const { lastHelpMessage } = require("./plugins/help"); // ✅ Help map එක එකතු කළා
+const { lastHelpMessage } = require("./plugins/help"); 
 const { connectDB, getBotSettings, updateSetting } = require("./plugins/bot_db");
 
-// --- 🛠️ JID Decoder ---
 const decodeJid = (jid) => {
     if (!jid) return jid;
     if (/:\d+@/gi.test(jid)) {
@@ -34,7 +32,6 @@ const decodeJid = (jid) => {
     return jid;
 };
 
-// Global settings object
 global.CURRENT_BOT_SETTINGS = {
     botName: config.DEFAULT_BOT_NAME,
     ownerName: config.DEFAULT_OWNER_NAME,
@@ -44,7 +41,12 @@ global.CURRENT_BOT_SETTINGS = {
 const app = express();
 const port = process.env.PORT || 8000;
 const credsPath = path.join(__dirname, "/auth_info_baileys/creds.json");
-const messagesStore = {};
+
+// 🚀 [UPDATE] messagesStore එක පිරෙන එක නවත්වන්න logic එකක් එකතු කළා
+let messagesStore = {};
+setInterval(() => {
+    messagesStore = {}; // සෑම විනාඩි 15කට වරක් ස්ටෝර් එක හිස් කරයි (RAM එක බේරා ගැනීමට)
+}, 15 * 60 * 1000);
 
 process.on('uncaughtException', (err) => console.error('⚠️ Exception:', err));
 process.on('unhandledRejection', (reason) => console.error('⚠️ Rejection:', reason));
@@ -76,7 +78,6 @@ async function connectToWA() {
     await connectDB();
     global.CURRENT_BOT_SETTINGS = await getBotSettings();
 
-    // --- 📂 1. LOAD PLUGINS FIRST (Fix for Commands not working) ---
     const pluginsPath = path.join(__dirname, "plugins");
     fs.readdirSync(pluginsPath).forEach((plugin) => {
         if (path.extname(plugin).toLowerCase() === ".js") {
@@ -89,8 +90,6 @@ async function connectToWA() {
         }
     });
 
-    console.log(`[SYS] ${global.CURRENT_BOT_SETTINGS.botName} | Prefix: ${global.CURRENT_BOT_SETTINGS.prefix} | Loaded: ${commands.length} Commands`);
-
     const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, "/auth_info_baileys/"));
     const { version } = await fetchLatestBaileysVersion();
 
@@ -100,7 +99,7 @@ async function connectToWA() {
         browser: Browsers.macOS("Firefox"),
         auth: state,
         version,
-        syncFullHistory: true,
+        syncFullHistory: false, // 🚀 [UPDATE] ඉතිහාසය ඔක්කොම sync කිරීම Codespace එකට අනවශ්‍යයි (RAM ඉතුරු වේ)
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
     });
@@ -112,14 +111,11 @@ async function connectToWA() {
         } else if (connection === "open") {
             console.log("✅ ZANTA-MD Connected");
 
-            // --- ⚙️ ALWAYS ONLINE LOGIC ---
             setInterval(async () => {
                 if (global.CURRENT_BOT_SETTINGS.alwaysOnline === 'true') {
                     await zanta.sendPresenceUpdate('available');
-                } else {
-                    await zanta.sendPresenceUpdate('unavailable');
                 }
-            }, 10000);
+            }, 30000); // 🚀 [UPDATE] තත්පර 30කට වරක් check කිරීම සෑහේ
 
             const ownerJid = decodeJid(zanta.user.id);
             await zanta.sendMessage(ownerJid, {
@@ -135,7 +131,6 @@ async function connectToWA() {
         const mek = messages[0];
         if (!mek || !mek.message) return;
 
-        // Auto Status Seen
         if (global.CURRENT_BOT_SETTINGS.autoStatusSeen === 'true' && mek.key.remoteJid === "status@broadcast") {
             await zanta.readMessages([mek.key]);
             return;
@@ -156,7 +151,6 @@ async function connectToWA() {
         const commandName = isCmd ? body.slice(prefix.length).trim().split(" ")[0].toLowerCase() : "";
         const args = body.trim().split(/ +/).slice(1);
 
-        // --- 🛡️ OWNER LOGIC ---
         const sender = mek.key.fromMe ? zanta.user.id : (mek.key.participant || mek.key.remoteJid);
         const decodedSender = decodeJid(sender);
         const decodedBot = decodeJid(zanta.user.id);
@@ -168,7 +162,6 @@ async function connectToWA() {
                         decodedSender === decodedBot || 
                         senderNumber === configOwner;
 
-        // --- ⚙️ AUTO SETTINGS ACTION ---
         if (global.CURRENT_BOT_SETTINGS.autoRead === 'true') {
             await zanta.readMessages([mek.key]);
         }
@@ -189,10 +182,9 @@ async function connectToWA() {
 
         const reply = (text) => zanta.sendMessage(from, { text }, { quoted: mek });
 
-        // --- 📩 REPLY LOGIC ---
         const isMenuReply = (m.quoted && lastMenuMessage && lastMenuMessage.get(from) === m.quoted.id);
         const isSettingsReply = (m.quoted && lastSettingsMessage && lastSettingsMessage.get(from) === m.quoted.id);
-        const isHelpReply = (m.quoted && lastHelpMessage && lastHelpMessage.get(from) === m.quoted.id); // ✅ Help reply එක හඳුනාගැනීම
+        const isHelpReply = (m.quoted && lastHelpMessage && lastHelpMessage.get(from) === m.quoted.id);
 
         if (isSettingsReply && body && !isCmd && isOwner) {
             const input = body.trim().split(" ");
@@ -210,31 +202,29 @@ async function connectToWA() {
                 if (success) {
                     global.CURRENT_BOT_SETTINGS[dbKey] = finalValue;
                     await reply(`✅ *${dbKey}* updated to: *${finalValue}*`);
-                    const cmd = commands.find(c => c.pattern === 'settings');
-                    if (cmd) cmd.function(zanta, mek, m, { from, reply, isOwner, prefix });
+                    const cmdObj = commands.find(c => c.pattern === 'settings');
+                    if (cmdObj) cmdObj.function(zanta, mek, m, { from, reply, isOwner, prefix });
                     return;
                 }
             }
         }
 
-        // 2. Command Execution Logic
         let shouldExecuteMenu = (isMenuReply && body && !body.startsWith(prefix));
-        let shouldExecuteHelp = (isHelpReply && body && !body.startsWith(prefix)); // ✅ Help execute logic එක
+        let shouldExecuteHelp = (isHelpReply && body && !body.startsWith(prefix));
 
         if (isCmd || shouldExecuteMenu || shouldExecuteHelp) {
-            // Help reply එකක් නම් 'help' command එකත්, Menu reply එකක් නම් 'menu' command එකත් ක්‍රියාත්මක කරයි
             const execName = shouldExecuteHelp ? 'help' : (shouldExecuteMenu ? 'menu' : commandName);
             const execArgs = (shouldExecuteHelp || shouldExecuteMenu) ? [body.trim().toLowerCase()] : args;
 
-            const cmd = commands.find(c => c.pattern === execName || (c.alias && c.alias.includes(execName)));
+            const cmdObj = commands.find(c => c.pattern === execName || (c.alias && c.alias.includes(execName)));
 
-            if (cmd) {
+            if (cmdObj) {
                 if (global.CURRENT_BOT_SETTINGS.readCmd === 'true') {
                     await zanta.readMessages([mek.key]);
                 }
-                if (cmd.react) zanta.sendMessage(from, { react: { text: cmd.react, key: mek.key } });
+                if (cmdObj.react) zanta.sendMessage(from, { react: { text: cmdObj.react, key: mek.key } });
                 try {
-                    cmd.function(zanta, mek, m, {
+                    cmdObj.function(zanta, mek, m, {
                         from, quoted: mek, body, isCmd, command: execName, args: execArgs, q: execArgs.join(" "),
                         isGroup, sender, senderNumber, botNumber2, botNumber: senderNumber, pushname: mek.pushName || "User",
                         isMe: mek.key.fromMe, isOwner, groupMetadata, groupName: groupMetadata.subject, participants,
