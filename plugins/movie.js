@@ -6,7 +6,7 @@ cmd({
     pattern: "film",
     alias: ["movie", "movie-dl"],
     react: "🎬",
-    desc: "Optimized movie downloader for GitHub Actions/Servers.",
+    desc: "Optimized movie downloader for Render/VPS.",
     category: "download",
     filename: __filename,
 }, async (zanta, mek, m, { from, q, reply, isOwner }) => {
@@ -15,57 +15,53 @@ cmd({
     if (!q) return reply("🎥 කරුණාකර චිත්‍රපටයේ නම ලබා දෙන්න.");
 
     try {
-        await reply("🚀 *ZANTA-FILM-MD* is fetching your movie via Server Stream...");
+        await reply("🚀 *ZANTA-FILM-MD* is fetching your movie via Render Server...");
 
-        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' };
+        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' };
         
-        // 1. සර්ච් එක සහ ලින්ක් එක ගැනීම
+        // 1. සෙවුම
         const searchUrl = `https://cinesubz.lk/?s=${encodeURIComponent(q)}`;
-        const response = await axios.get(searchUrl, { headers });
+        const response = await axios.get(searchUrl, { headers, timeout: 15000 });
         const $ = cheerio.load(response.data);
-        let movieUrl = "";
+        
+        // වඩාත් නිවැරදිව පළමු මූවී ලින්ක් එක ගැනීම
+        let movieUrl = $("article a").first().attr("href");
 
-        $('a').each((i, el) => {
-            const href = $(el).attr('href');
-            if (href && href.includes('/movies/') && href.includes(q.toLowerCase().replace(/\s+/g, '-'))) {
-                movieUrl = href;
-                return false;
-            }
-        });
+        if (!movieUrl) return reply("❌ චිත්‍රපටය හමු වුණේ නැහැ. (Search Error)");
 
-        if (!movieUrl) return reply("❌ චිත්‍රපටය හමු වුණේ නැහැ.");
-
-        const movieRes = await axios.get(movieUrl, { headers });
+        // 2. මූවී පේජ් එකට යාම
+        const movieRes = await axios.get(movieUrl, { headers, timeout: 15000 });
         const $$ = cheerio.load(movieRes.data);
-        const title = $$('h1').first().text().trim() || "Movie";
+        const title = $$('h1.entry-title').text().trim() || "Movie";
         
         let pixeldrainId = "";
+        
+        // Pixeldrain ID එක සොයා ගැනීම (Link එකේ තියෙන එක)
         $$('a').each((i, el) => {
             const href = $$(el).attr('href');
-            if (href && href.includes('/api-')) {
-                const parts = href.split('/');
-                const id = parts.filter(p => p.length > 5).pop();
-                if (id) { pixeldrainId = id.replace(/\/$/, ""); return false; }
+            if (href && href.includes('pixeldrain.com/u/')) {
+                const parts = href.split('/u/');
+                pixeldrainId = parts[1].split(/[?#]/)[0]; // ID එක විතරක් වෙන් කර ගනී
+                return false; 
             }
         });
 
-        if (!pixeldrainId) return reply("❌ ඩවුන්ලෝඩ් ලින්ක් එක සොයාගත නොහැක.");
+        if (!pixeldrainId) return reply("❌ Pixeldrain Link එක සොයාගත නොහැක.");
 
         const finalDlLink = `https://pixeldrain.com/api/file/${pixeldrainId}`;
 
-        // 2. කෙලින්ම Server Stream එක WhatsApp එකට යැවීම
-        // මේකෙන් RAM එක හෝ Disk Space එක පිරෙන්නේ නැහැ
+        // 3. WhatsApp එකට යැවීම (Streaming)
         await zanta.sendMessage(from, {
-            document: { url: finalDlLink }, // Server එක කෙලින්ම URL එක Stream කරයි
+            document: { url: finalDlLink },
             mimetype: 'video/mp4',
             fileName: `${title}.mp4`,
-            caption: `🎬 *${title}*\n\n> *ZANTA-FILM-MD SERVER UPLOAD*`
+            caption: `🎬 *${title}*\n\n✅ *Source:* CineSubz\n🚀 *Server:* Render Stream\n\n> *ZANTA-FILM-MD*`
         }, { quoted: mek });
 
         await m.react("✅");
 
     } catch (e) {
         console.error(e);
-        reply("❌ Server Error: " + e.message);
+        reply("❌ දෝෂය: " + e.message);
     }
 });
